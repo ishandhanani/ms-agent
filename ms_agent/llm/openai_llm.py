@@ -225,15 +225,22 @@ class OpenAI(LLM):
         if is_streaming and stream_options_config.get('include_usage', True):
             kwargs.setdefault('stream_options', {})['include_usage'] = True
 
-        kwargs = agent_trace.instrument_llm_request(
+        kwargs, trace = agent_trace.start_llm_request(
             kwargs,
             model=self.model,
             stream=bool(is_streaming),
             tool_count=len(tools or []),
         )
 
-        return self.client.chat.completions.create(
-            model=self.model, messages=messages, tools=tools, **kwargs)
+        try:
+            completion = self.client.chat.completions.create(
+                model=self.model, messages=messages, tools=tools, **kwargs)
+        except Exception as exc:
+            if trace is not None:
+                trace.end('error', str(exc))
+            raise
+        return agent_trace.finish_llm_request(
+            completion, trace, stream=bool(is_streaming))
 
     @staticmethod
     def _extract_cache_info(usage_obj: Any) -> tuple:

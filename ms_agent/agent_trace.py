@@ -9,7 +9,7 @@ import os
 import threading
 import time
 import uuid
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Dict, Iterable, Iterator, Optional, Tuple
 
 
 _CURRENT_CONTEXT: contextvars.ContextVar[Optional[Dict[str, Any]]] = (
@@ -75,27 +75,138 @@ def merge_extra_body(extra_body: Any, agent_context: Dict[str, Any]) -> Dict[str
     return merged
 
 
-def instrument_llm_request(kwargs: Dict[str, Any], *, model: str, stream: bool,
-                           tool_count: int) -> Dict[str, Any]:
+class LLMRequestTrace:
+
+    def __init__(self, agent_context: Dict[str, Any], *, model: str,
+                 stream: bool, tool_count: int):
+        self.agent_context = dict(agent_context)
+        self.llm_call_id = str(uuid.uuid4())
+        self.model = model
+        self.stream = bool(stream)
+        self.tool_count = tool_count
+        self.started_at = time.perf_counter()
+        self._linked = False
+        self._ended = False
+        self._dynamo_request_id: Optional[str] = None
+
+    def _request_payload(self) -> Dict[str, Any]:
+        payload = {
+            'llm_call_id': self.llm_call_id,
+            'model': self.model,
+            'stream': self.stream,
+            'tool_count': self.tool_count,
+        }
+        if self._dynamo_request_id:
+            payload['dynamo_request_id'] = self._dynamo_request_id
+        return payload
+
+    def start(self) -> None:
+        emit_event(
+            'llm_request',
+            {
+                'agent_context': self.agent_context,
+                'request': self._request_payload(),
+            },
+        )
+
+    def link_response_id(self, response_id: Any) -> None:
+        if self._linked or not response_id:
+            return
+        self._linked = True
+        self._dynamo_request_id = str(response_id)
+        emit_event(
+            'llm_request_link',
+            {
+                'agent_context': self.agent_context,
+                'request': self._request_payload(),
+            },
+        )
+
+    def end(self, status: str, error: Optional[str] = None) -> None:
+        if self._ended:
+            return
+        self._ended = True
+        payload = self._request_payload()
+        payload.update({
+            'duration_ms': (time.perf_counter() - self.started_at) * 1000.0,
+            'status': status,
+        })
+        if error:
+            payload['error'] = error
+        emit_event(
+            'llm_request_end',
+            {
+                'agent_context': self.agent_context,
+                'request': payload,
+            },
+        )
+
+
+class _TracedStream:
+
+    def __init__(self, stream: Iterable[Any], trace: LLMRequestTrace):
+        self._stream = stream
+        self._iterator = iter(stream)
+        self._trace = trace
+
+    def __iter__(self) -> '_TracedStream':
+        return self
+
+    def __next__(self) -> Any:
+        try:
+            chunk = next(self._iterator)
+        except StopIteration:
+            self._trace.end('ok')
+            raise
+        except Exception as exc:
+            self._trace.end('error', str(exc))
+            raise
+        self._trace.link_response_id(getattr(chunk, 'id', None))
+        return chunk
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._stream, name)
+
+    def close(self) -> None:
+        close = getattr(self._stream, 'close', None)
+        if callable(close):
+            close()
+        self._trace.end('cancelled')
+
+
+def start_llm_request(
+        kwargs: Dict[str, Any], *, model: str, stream: bool,
+        tool_count: int) -> Tuple[Dict[str, Any], Optional[LLMRequestTrace]]:
     agent_context = current_context()
     if not agent_context:
-        return kwargs
+        return kwargs, None
 
     kwargs = dict(kwargs)
     kwargs['extra_body'] = merge_extra_body(
         kwargs.get('extra_body'), agent_context)
-    emit_event(
-        'llm_request',
-        {
-            'agent_context': agent_context,
-            'request': {
-                'model': model,
-                'stream': bool(stream),
-                'tool_count': tool_count,
-            },
-        },
-    )
+    trace = LLMRequestTrace(
+        agent_context, model=model, stream=stream, tool_count=tool_count)
+    trace.start()
+    return kwargs, trace
+
+
+def instrument_llm_request(kwargs: Dict[str, Any], *, model: str, stream: bool,
+                           tool_count: int) -> Dict[str, Any]:
+    kwargs, _ = start_llm_request(
+        kwargs, model=model, stream=stream, tool_count=tool_count)
     return kwargs
+
+
+def finish_llm_request(response: Any, trace: Optional[LLMRequestTrace],
+                       *,
+                       stream: bool) -> Any:
+    if trace is None:
+        return response
+    if stream:
+        return _TracedStream(response, trace)
+    trace.link_response_id(getattr(response, 'id', None))
+    trace.end('ok')
+    return response
 
 
 def normalize_tool_class(tool_name: str) -> str:
