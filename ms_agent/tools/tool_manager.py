@@ -2,14 +2,14 @@
 import asyncio
 import importlib
 import inspect
+import json
 import os
 import sys
-import uuid
 from copy import copy
 from types import TracebackType
 from typing import Any, Dict, List, Optional
 
-import json
+from ms_agent import agent_trace
 from ms_agent.llm.utils import Tool, ToolCall
 from ms_agent.tools.agent_tool import AgentTool
 from ms_agent.tools.base import ToolBase
@@ -211,8 +211,9 @@ class ToolManager:
             brief_info = json.dumps(tool_info, ensure_ascii=False)
             if len(brief_info) > 1024:
                 brief_info = brief_info[:1024] + '...'
+            tool_name = tool_info.get('tool_name', '')
+            trace = agent_trace.start_tool_call(tool_name, tool_info.get('id'))
             try:
-                tool_name = tool_info['tool_name']
                 tool_args = tool_info['arguments']
                 while isinstance(tool_args, str):
                     try:
@@ -224,23 +225,25 @@ class ToolManager:
                 call_args = tool_args
                 if isinstance(tool_ins, AgentTool):
                     call_args = dict(tool_args or {})
-                    call_id = tool_info.get('id') or str(uuid.uuid4())
-                    call_args['__call_id'] = call_id
+                    call_args['__call_id'] = trace.tool_call_id
                 response = await asyncio.wait_for(
                     tool_ins.call_tool(
                         server_name,
                         tool_name=tool_name.split(self.TOOL_SPLITER)[1],
                         tool_args=call_args),
                     timeout=self.tool_call_timeout)
+                trace.end('ok', output=response)
                 return response
             except asyncio.TimeoutError:
                 import traceback
                 logger.warning(traceback.format_exc())
+                trace.end('timeout')
                 # TODO: How to get the information printed by the tool before hanging to return to the model?
                 return f'Execute tool call timeout: {brief_info}'
             except Exception as e:
                 import traceback
                 logger.warning(traceback.format_exc())
+                trace.end('error')
                 return f'Tool calling failed: {brief_info}, details: {str(e)}'
 
     async def parallel_call_tool(self, tool_list: List[ToolCall]):

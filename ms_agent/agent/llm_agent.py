@@ -11,6 +11,7 @@ from copy import deepcopy
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
 
 import json
+from ms_agent import agent_trace
 from ms_agent.agent.runtime import Runtime
 from ms_agent.callbacks import Callback, callbacks_mapping
 from ms_agent.knowledge_search import SirchmunkSearch
@@ -118,6 +119,10 @@ class LLMAgent(Agent):
             kwargs.get('mcp_config', {}))
         self.mcp_client = kwargs.get('mcp_client', None)
         self.config_handler = self.register_config_handler()
+        self._dynamo_agent_context = agent_trace.build_agent_context(
+            self.tag,
+            parent_program_id=kwargs.get('parent_program_id'),
+        )
 
         # AutoSkills integration (lazy initialization)
         self._auto_skills = None
@@ -1195,13 +1200,17 @@ class LLMAgent(Agent):
                     self.config, 'generation_config.stream', True, merge=True)
 
                 async def stream_generator():
-                    async for _chunk in self.run_loop(
-                            messages=messages, **kwargs):
-                        yield _chunk
+                    with agent_trace.activate_context(
+                            self._dynamo_agent_context):
+                        async for _chunk in self.run_loop(
+                                messages=messages, **kwargs):
+                            yield _chunk
 
                 return stream_generator()
             else:
                 res = None
-                async for chunk in self.run_loop(messages=messages, **kwargs):
-                    res = chunk
+                with agent_trace.activate_context(self._dynamo_agent_context):
+                    async for chunk in self.run_loop(
+                            messages=messages, **kwargs):
+                        res = chunk
                 return res

@@ -13,6 +13,7 @@ from queue import Full as QueueFull
 from typing import Any, Callable, Dict, List, Optional, Union
 
 import json
+from ms_agent import agent_trace
 from ms_agent.agent.loader import AgentLoader
 from ms_agent.llm.utils import Message, Tool
 from ms_agent.tools.base import ToolBase
@@ -69,7 +70,9 @@ def _message_from_data(data: Any) -> Message:
     return Message(role='assistant', content=str(data))
 
 
-def _build_sub_agent(spec: _AgentToolSpec, default_trust_remote_code: bool):
+def _build_sub_agent(spec: _AgentToolSpec,
+                     default_trust_remote_code: bool,
+                     parent_program_id: Optional[str] = None):
     if spec.inline_config is not None:
         config_override = OmegaConf.create(spec.inline_config)
     else:
@@ -86,6 +89,7 @@ def _build_sub_agent(spec: _AgentToolSpec, default_trust_remote_code: bool):
         env=spec.env,
         tag=tag,
         trust_remote_code=trust_remote_code,
+        parent_program_id=parent_program_id,
     )
 
     generation_cfg = getattr(agent.config, 'generation_config', DictConfig({}))
@@ -100,10 +104,12 @@ def _run_agent_in_subprocess(
     stream_events: bool,
     event_queue: Any,
     result_queue: Any,
+    parent_program_id: Optional[str] = None,
 ) -> None:
     sub_agent = None
     try:
-        sub_agent = _build_sub_agent(spec, default_trust_remote_code)
+        sub_agent = _build_sub_agent(spec, default_trust_remote_code,
+                                     parent_program_id)
         run_payload = payload
         if isinstance(run_payload, list):
             run_payload = [_message_from_data(msg) for msg in run_payload]
@@ -409,13 +415,24 @@ class AgentTool(ToolBase):
         if isinstance(tool_args, dict) and '__call_id' in tool_args:
             call_id = tool_args.pop('__call_id', None)
         payload = self._build_payload(tool_args, spec)
+        parent_program_id = agent_trace.current_program_id()
         use_subprocess = spec.run_in_thread and spec.run_in_process
-        agent = None if use_subprocess else self._build_agent(spec)
-        messages = await self._run_agent(agent, payload, spec, call_id=call_id)
+        agent = None if use_subprocess else self._build_agent(
+            spec, parent_program_id=parent_program_id)
+        messages = await self._run_agent(
+            agent,
+            payload,
+            spec,
+            call_id=call_id,
+            parent_program_id=parent_program_id,
+        )
         return self._format_output(messages, spec)
 
-    def _build_agent(self, spec: _AgentToolSpec):
-        return _build_sub_agent(spec, self._trust_remote_code)
+    def _build_agent(self,
+                     spec: _AgentToolSpec,
+                     parent_program_id: Optional[str] = None):
+        return _build_sub_agent(spec, self._trust_remote_code,
+                                parent_program_id)
 
     @staticmethod
     def _terminate_process(proc: Optional[mp.Process], *, reason: str) -> None:
@@ -523,7 +540,8 @@ class AgentTool(ToolBase):
                          agent,
                          payload,
                          spec: _AgentToolSpec,
-                         call_id: Optional[str] = None):
+                         call_id: Optional[str] = None,
+                         parent_program_id: Optional[str] = None):
         runtime_agent = agent
         runtime_agent_tag = getattr(runtime_agent, 'tag', None)
         runtime_agent_type = getattr(runtime_agent, 'AGENT_NAME', None)
@@ -531,7 +549,8 @@ class AgentTool(ToolBase):
         async def _run_and_collect():
             nonlocal runtime_agent, runtime_agent_tag, runtime_agent_type
             if runtime_agent is None:
-                runtime_agent = self._build_agent(spec)
+                runtime_agent = self._build_agent(
+                    spec, parent_program_id=parent_program_id)
                 runtime_agent_tag = getattr(runtime_agent, 'tag', None)
                 runtime_agent_type = getattr(runtime_agent, 'AGENT_NAME', None)
             if self._chunk_cb:
@@ -624,7 +643,8 @@ class AgentTool(ToolBase):
                     target=_run_agent_in_subprocess,
                     args=(spec, self._trust_remote_code, process_payload,
                           self._chunk_cb
-                          is not None, event_queue, result_queue),
+                          is not None, event_queue, result_queue,
+                          parent_program_id),
                     name=f'agent_tool_{spec.tool_name}',
                 )
                 proc.start()
