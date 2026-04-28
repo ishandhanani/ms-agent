@@ -237,13 +237,13 @@ class ToolManager:
             except asyncio.TimeoutError:
                 import traceback
                 logger.warning(traceback.format_exc())
-                trace.end('timeout')
+                trace.end('cancelled', error_type='timeout')
                 # TODO: How to get the information printed by the tool before hanging to return to the model?
                 return f'Execute tool call timeout: {brief_info}'
             except Exception as e:
                 import traceback
                 logger.warning(traceback.format_exc())
-                trace.end('error')
+                trace.end('error', error_type=type(e).__name__)
                 return f'Tool calling failed: {brief_info}, details: {str(e)}'
 
     async def parallel_call_tool(self, tool_list: List[ToolCall]):

@@ -5,6 +5,7 @@ from typing import Any, Dict, Generator, Iterable, List, Optional
 
 from ms_agent import agent_trace
 from ms_agent.llm import LLM
+from ms_agent.llm.openai_compat import normalize_request_kwargs
 from ms_agent.llm.utils import Message, Tool, ToolCall
 from ms_agent.utils import (MAX_CONTINUE_RUNS, assert_package_exist,
                             get_logger, retry)
@@ -225,22 +226,16 @@ class OpenAI(LLM):
         if is_streaming and stream_options_config.get('include_usage', True):
             kwargs.setdefault('stream_options', {})['include_usage'] = True
 
-        kwargs, trace = agent_trace.start_llm_request(
+        kwargs = normalize_request_kwargs(self.base_url, kwargs)
+        kwargs = agent_trace.instrument_llm_request(
             kwargs,
             model=self.model,
             stream=bool(is_streaming),
             tool_count=len(tools or []),
         )
 
-        try:
-            completion = self.client.chat.completions.create(
-                model=self.model, messages=messages, tools=tools, **kwargs)
-        except Exception as exc:
-            if trace is not None:
-                trace.end('error', str(exc))
-            raise
-        return agent_trace.finish_llm_request(
-            completion, trace, stream=bool(is_streaming))
+        return self.client.chat.completions.create(
+            model=self.model, messages=messages, tools=tools, **kwargs)
 
     @staticmethod
     def _extract_cache_info(usage_obj: Any) -> tuple:
