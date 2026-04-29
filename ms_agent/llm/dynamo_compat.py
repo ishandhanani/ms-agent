@@ -1,4 +1,11 @@
 # Copyright (c) ModelScope Contributors. All rights reserved.
+"""Compatibility helpers for running ms-agent against Dynamo OpenAI endpoints.
+
+Dynamo's SGLang-backed OpenAI-compatible endpoint expects some generation
+extensions in `chat_template_kwargs`, while DashScope accepts them directly in
+`extra_body`. These helpers keep ms-agent configs portable across both forms.
+"""
+
 from __future__ import annotations
 
 from typing import Any, Dict

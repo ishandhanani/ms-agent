@@ -83,14 +83,8 @@ def merge_extra_body(
 
 def instrument_llm_request(
     kwargs: Dict[str, Any],
-    *,
-    model: str,
-    stream: bool,
-    tool_count: int,
 ) -> Dict[str, Any]:
     """Attach Dynamo context and x-request-id to an OpenAI request."""
-    del model, stream, tool_count
-
     agent_context = current_context()
     if not agent_context:
         return kwargs

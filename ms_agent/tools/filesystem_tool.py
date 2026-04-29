@@ -1031,12 +1031,7 @@ class FileSystemTool(ToolBase):
         try:
             with open(os.path.join(self.output_dir, path), 'r') as f:
                 initial_code = f.read()
-                request_kwargs = agent_trace.instrument_llm_request(
-                    {},
-                    model=self.edit_file_config.diff_model,
-                    stream=False,
-                    tool_count=0,
-                )
+                request_kwargs = agent_trace.instrument_llm_request({})
                 response = self.edit_client.chat.completions.create(
                     model=self.edit_file_config.diff_model,
                     messages=[{

@@ -5,7 +5,7 @@ from typing import Any, Dict, Generator, Iterable, List, Optional
 
 from ms_agent import agent_trace
 from ms_agent.llm import LLM
-from ms_agent.llm.openai_compat import normalize_request_kwargs
+from ms_agent.llm.dynamo_compat import normalize_request_kwargs
 from ms_agent.llm.utils import Message, Tool, ToolCall
 from ms_agent.utils import (MAX_CONTINUE_RUNS, assert_package_exist,
                             get_logger, retry)
@@ -227,12 +227,7 @@ class OpenAI(LLM):
             kwargs.setdefault('stream_options', {})['include_usage'] = True
 
         kwargs = normalize_request_kwargs(self.base_url, kwargs)
-        kwargs = agent_trace.instrument_llm_request(
-            kwargs,
-            model=self.model,
-            stream=bool(is_streaming),
-            tool_count=len(tools or []),
-        )
+        kwargs = agent_trace.instrument_llm_request(kwargs)
 
         return self.client.chat.completions.create(
             model=self.model, messages=messages, tools=tools, **kwargs)

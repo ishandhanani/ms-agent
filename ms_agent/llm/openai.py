@@ -35,22 +35,14 @@ class OpenAIChat:
     def _instrument_request(
         self,
         kwargs: Dict[str, Any],
-        *,
-        stream: bool,
-        tools: List[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        return agent_trace.instrument_llm_request(
-            dict(kwargs),
-            model=self._model or '',
-            stream=stream,
-            tool_count=len(tools or []),
-        )
+        return agent_trace.instrument_llm_request(dict(kwargs))
 
     def chat(self,
              messages: List[Dict[str, Any]],
              tools: List[Dict[str, Any]] = None,
              **kwargs) -> Dict[str, Any]:
-        kwargs = self._instrument_request(kwargs, stream=False, tools=tools)
+        kwargs = self._instrument_request(kwargs)
 
         completion: ChatCompletion = self._client.chat.completions.create(
             messages=messages, model=self._model, tools=tools, **kwargs)
@@ -120,8 +112,7 @@ class OpenAIChat:
 
         logger.info(f"Temperature: {kwargs.get('temperature', -1)}")
 
-        kwargs = self._instrument_request(
-            kwargs, stream=bool(kwargs.get('stream', True)), tools=tools)
+        kwargs = self._instrument_request(kwargs)
 
         completion: Stream = self._client.chat.completions.create(
             messages=messages,
