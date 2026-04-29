@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 import json
+from ms_agent import agent_trace
 from ms_agent.llm import LLM
 from ms_agent.llm.utils import Message, Tool
 from ms_agent.tools.base import ToolBase
@@ -1030,6 +1031,12 @@ class FileSystemTool(ToolBase):
         try:
             with open(os.path.join(self.output_dir, path), 'r') as f:
                 initial_code = f.read()
+                request_kwargs = agent_trace.instrument_llm_request(
+                    {},
+                    model=self.edit_file_config.diff_model,
+                    stream=False,
+                    tool_count=0,
+                )
                 response = self.edit_client.chat.completions.create(
                     model=self.edit_file_config.diff_model,
                     messages=[{
@@ -1039,7 +1046,8 @@ class FileSystemTool(ToolBase):
                         (f'<instruction>{instructions}</instruction>\n'
                          f'<code>{initial_code}</code>\n'
                          f'<update>{code_edit}</update>')
-                    }])
+                    }],
+                    **request_kwargs)
                 merged_code = response.choices[0].message.content
 
             with open(os.path.join(self.output_dir, path), 'w') as f:

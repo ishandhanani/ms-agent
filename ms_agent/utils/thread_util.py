@@ -1,4 +1,5 @@
 # Copyright (c) ModelScope Contributors. All rights reserved.
+import contextvars
 import os
 import threading
 import weakref
@@ -13,6 +14,12 @@ logger = get_logger()
 DEFAULT_MAX_WORKERS = int(
     os.getenv('DEFAULT_MAX_WORKERS', min(8,
                                          os.cpu_count() + 4)))
+
+
+def run_in_executor_with_context(loop, executor, func, *args, **kwargs):
+    context = contextvars.copy_context()
+    return loop.run_in_executor(executor,
+                                lambda: context.run(func, *args, **kwargs))
 
 
 def thread_executor(max_workers: int = DEFAULT_MAX_WORKERS,

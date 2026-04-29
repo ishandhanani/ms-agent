@@ -3,6 +3,7 @@ import uuid
 from typing import TYPE_CHECKING, Any, Dict, List, Literal
 
 import json
+from ms_agent import agent_trace
 from ms_agent.utils.logger import get_logger
 from openai import OpenAI, Stream
 from openai.types.chat.chat_completion_chunk import ChoiceDeltaToolCall
@@ -31,10 +32,25 @@ class OpenAIChat:
         self._model = model
         self._kwargs = kwargs
 
+    def _instrument_request(
+        self,
+        kwargs: Dict[str, Any],
+        *,
+        stream: bool,
+        tools: List[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        return agent_trace.instrument_llm_request(
+            dict(kwargs),
+            model=self._model or '',
+            stream=stream,
+            tool_count=len(tools or []),
+        )
+
     def chat(self,
              messages: List[Dict[str, Any]],
              tools: List[Dict[str, Any]] = None,
              **kwargs) -> Dict[str, Any]:
+        kwargs = self._instrument_request(kwargs, stream=False, tools=tools)
 
         completion: ChatCompletion = self._client.chat.completions.create(
             messages=messages, model=self._model, tools=tools, **kwargs)
@@ -103,6 +119,9 @@ class OpenAIChat:
         ), "Streaming must be enabled by setting 'stream=True' in kwargs."
 
         logger.info(f"Temperature: {kwargs.get('temperature', -1)}")
+
+        kwargs = self._instrument_request(
+            kwargs, stream=bool(kwargs.get('stream', True)), tools=tools)
 
         completion: Stream = self._client.chat.completions.create(
             messages=messages,

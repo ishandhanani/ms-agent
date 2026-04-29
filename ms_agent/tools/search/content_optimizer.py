@@ -12,7 +12,8 @@ import json
 from ms_agent.llm.openai_llm import OpenAI
 from ms_agent.llm.utils import Message
 from ms_agent.utils.logger import get_logger
-from ms_agent.utils.thread_util import DaemonThreadPoolExecutor
+from ms_agent.utils.thread_util import (DaemonThreadPoolExecutor,
+                                        run_in_executor_with_context)
 from omegaconf import DictConfig, OmegaConf
 
 logger = get_logger()
@@ -524,8 +525,8 @@ class ContentSummarizer:
             # Run synchronous LLM call in executor with timeout
             loop = asyncio.get_event_loop()
             response_msg: Message = await asyncio.wait_for(
-                loop.run_in_executor(self._executor, self._call_llm_sync,
-                                     prompt),
+                run_in_executor_with_context(loop, self._executor,
+                                             self._call_llm_sync, prompt),
                 timeout=self.config.summarization_timeout,
             )
 

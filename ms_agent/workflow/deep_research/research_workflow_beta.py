@@ -14,6 +14,7 @@ from ms_agent.tools.search.exa.schema import dump_batch_search_results
 from ms_agent.tools.search.search_base import SearchRequest, SearchResult
 from ms_agent.tools.search.search_request import get_search_request_generator
 from ms_agent.utils.logger import get_logger
+from ms_agent.utils.thread_util import run_in_executor_with_context
 from ms_agent.utils.utils import remove_resource_info, text_hash
 from ms_agent.workflow.deep_research.principle import MECEPrinciple, Principle
 from ms_agent.workflow.deep_research.research_utils import (LearningsResponse,
@@ -232,13 +233,9 @@ class ResearchWorkflowBeta(ResearchWorkflow):
         """Non-blocking wrapper with controlled concurrency."""
         async with self._resource_pool.llm_semaphore:
             loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(
-                self._resource_pool.llm_executor,
-                self._chat_sync,
-                messages,
-                tools,
-                kwargs
-            )
+            return await run_in_executor_with_context(
+                loop, self._resource_pool.llm_executor, self._chat_sync,
+                messages, tools, kwargs)
 
     def _chat_sync(self, messages, tools, kwargs_dict):
         """Helper for thread pool executor."""
