@@ -185,23 +185,18 @@ class OpenAI(LLM):
         stream = args.get('stream', False)
 
         args = {key: value for key, value in args.items() if key in parameters}
-        formatted_tools = self.format_tools(tools)
-        completion = self._call_llm(messages, formatted_tools, **args)
+        completion = self._call_llm(messages, self.format_tools(tools), **args)
 
         # Complex task may produce long response
         # Call continue_generate to keep generating if the finish_reason is `length`
-        max_continue_runs = (
-            self.max_continue_runs
-            if max_continue_runs is None else max_continue_runs)
-        remaining_continue_runs = max(max_continue_runs - 1, 0)
+        max_continue_runs = max_continue_runs or self.max_continue_runs
         if stream:
-            return self._stream_continue_generate(messages, completion,
-                                                  formatted_tools,
-                                                  remaining_continue_runs,
+            return self._stream_continue_generate(messages, completion, tools,
+                                                  max_continue_runs - 1,
                                                   **args)
         else:
-            return self._continue_generate(messages, completion, formatted_tools,
-                                           remaining_continue_runs, **args)
+            return self._continue_generate(messages, completion, tools,
+                                           max_continue_runs - 1, **args)
 
     def _call_llm(self,
                   messages: List[Message],

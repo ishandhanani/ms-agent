@@ -5,12 +5,8 @@ ms-agent only attaches Dynamo context to LLM requests and optionally publishes
 tool lifecycle events. Dynamo owns normalized LLM tracing and trace sinks.
 """
 
-import asyncio
 import contextlib
 import contextvars
-import hashlib
-import inspect
-import json
 import os
 import time
 import uuid
@@ -57,53 +53,35 @@ def activate_context(agent_context: Optional[Dict[str, str]]) -> Iterator[None]:
         _CONTEXT.reset(token)
 
 
-def current_context() -> Optional[Dict[str, str]]:
-    context = _CONTEXT.get()
-    return dict(context) if context else None
-
-
 def current_program_id() -> Optional[str]:
-    context = current_context()
+    context = _CONTEXT.get()
     if not context:
         return None
     return context.get('program_id')
-
-
-def merge_extra_body(
-    extra_body: Any,
-    agent_context: Dict[str, str],
-) -> Dict[str, Any]:
-    body = dict(extra_body) if isinstance(extra_body, dict) else {}
-    nvext = body.get('nvext')
-    nvext = dict(nvext) if isinstance(nvext, dict) else {}
-    nvext['agent_context'] = dict(agent_context)
-    body['nvext'] = nvext
-    return body
 
 
 def instrument_llm_request(
     kwargs: Dict[str, Any],
 ) -> Dict[str, Any]:
     """Attach Dynamo context and x-request-id to an OpenAI request."""
-    agent_context = current_context()
+    agent_context = _CONTEXT.get()
     if not agent_context:
         return kwargs
 
     request_kwargs = dict(kwargs)
-    request_kwargs['extra_body'] = merge_extra_body(
-        request_kwargs.get('extra_body'), agent_context)
+
+    body = request_kwargs.get('extra_body')
+    body = dict(body) if isinstance(body, dict) else {}
+    nvext = body.get('nvext')
+    nvext = dict(nvext) if isinstance(nvext, dict) else {}
+    nvext['agent_context'] = dict(agent_context)
+    body['nvext'] = nvext
+    request_kwargs['extra_body'] = body
 
     headers = dict(request_kwargs.get('extra_headers') or {})
     headers.setdefault('x-request-id', str(uuid.uuid4()))
     request_kwargs['extra_headers'] = headers
     return request_kwargs
-
-
-async def _await_publish(awaitable: Any) -> None:
-    try:
-        await awaitable
-    except Exception:  # noqa
-        pass
 
 
 def _publish_record(record: Dict[str, Any]) -> None:
@@ -113,19 +91,12 @@ def _publish_record(record: Dict[str, Any]) -> None:
 
     try:
         publish = getattr(publisher, 'publish', None)
-        result = publish(record) if publish is not None else publisher(record)
+        if callable(publish):
+            publish(record)
+        else:
+            publisher(record)
     except Exception:  # noqa
-        return
-
-    if not inspect.isawaitable(result):
-        return
-
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        asyncio.run(_await_publish(result))
-    else:
-        loop.create_task(_await_publish(result))
+        pass
 
 
 def _emit_event(event_type: str, payload: Dict[str, Any]) -> None:
@@ -139,7 +110,7 @@ def _emit_event(event_type: str, payload: Dict[str, Any]) -> None:
     _publish_record(record)
 
 
-def normalize_tool_class(tool_name: str) -> str:
+def _tool_class(tool_name: str) -> str:
     if not tool_name:
         return 'unknown'
     if '---' in tool_name:
@@ -147,23 +118,6 @@ def normalize_tool_class(tool_name: str) -> str:
     if '/' in tool_name:
         return tool_name.split('/', 1)[0]
     return tool_name
-
-
-def hash_tool_name(tool_name: str) -> str:
-    digest = hashlib.sha256(tool_name.encode('utf-8')).hexdigest()
-    return f'sha256:{digest}'
-
-
-def _output_bytes(output: Any) -> int:
-    if isinstance(output, bytes):
-        return len(output)
-    if isinstance(output, str):
-        return len(output.encode('utf-8'))
-    try:
-        encoded = json.dumps(output, ensure_ascii=False, default=str)
-    except Exception:  # noqa
-        encoded = str(output)
-    return len(encoded.encode('utf-8'))
 
 
 def _tool_status(status: str) -> str:
@@ -177,10 +131,11 @@ def _tool_status(status: str) -> str:
 class ToolCallTrace:
 
     def __init__(self, tool_name: str, tool_call_id: Optional[str] = None):
-        self.agent_context = current_context()
+        context = _CONTEXT.get()
+        self.agent_context = dict(context) if context else None
         self.tool_name = tool_name or 'unknown'
         self.tool_call_id = tool_call_id or str(uuid.uuid4())
-        self.tool_class = normalize_tool_class(self.tool_name)
+        self.tool_class = _tool_class(self.tool_name)
         self.started_at = time.perf_counter()
         self.start()
 
@@ -188,7 +143,6 @@ class ToolCallTrace:
         return {
             'tool_call_id': self.tool_call_id,
             'tool_class': self.tool_class,
-            'tool_name_hash': hash_tool_name(self.tool_name),
         }
 
     def start(self) -> None:
@@ -204,7 +158,6 @@ class ToolCallTrace:
     def end(
         self,
         status: str,
-        output: Optional[Any] = None,
         error_type: Optional[str] = None,
     ) -> None:
         if not self.agent_context:
@@ -217,8 +170,6 @@ class ToolCallTrace:
                                1000),
             'status': normalized_status,
         })
-        if output is not None:
-            tool['output_bytes'] = _output_bytes(output)
         if error_type:
             tool['error_type'] = error_type
 

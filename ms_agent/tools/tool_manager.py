@@ -219,6 +219,7 @@ class ToolManager:
                     try:
                         tool_args = json.loads(tool_args)
                     except Exception:  # noqa
+                        trace.end('error', error_type='invalid_arguments')
                         return f'The input {tool_args} is not a valid JSON, fix your arguments and try again'
                 assert tool_name in self._tool_index, f'Tool name {tool_name} not found'
                 tool_ins, server_name, _ = self._tool_index[tool_name]
@@ -232,7 +233,7 @@ class ToolManager:
                         tool_name=tool_name.split(self.TOOL_SPLITER)[1],
                         tool_args=call_args),
                     timeout=self.tool_call_timeout)
-                trace.end('ok', output=response)
+                trace.end('ok')
                 return response
             except asyncio.TimeoutError:
                 import traceback
