@@ -42,6 +42,7 @@ _TOOL_EVENTS_TOPIC_ENVS = (
 _ZMQ_HWM = 100_000
 _ZMQ_MAX_QUEUE_SIZE = 100_000
 _ZMQ_SHUTDOWN_TIMEOUT_SECONDS = 1.0
+QUEUE_TOOL_EVENT_TYPE = 'dynamo_tool_event'
 
 
 def _first_env(names: Tuple[str, ...]) -> Optional[str]:
@@ -121,6 +122,23 @@ class _ZmqToolEventPublisher:
                 self._event_queue.task_done()
 
 
+class QueueToolEventPublisher:
+    """Forward tool trace records to an owning process over a queue."""
+
+    def __init__(self, event_queue: Any):
+        self._event_queue = event_queue
+
+    def publish(self, record: Dict[str, Any]) -> None:
+        try:
+            self._event_queue.put_nowait({
+                'type': QUEUE_TOOL_EVENT_TYPE,
+                'record': record,
+            })
+        except queue.Full:
+            logger.warning('Dynamo tool-event process queue is full; '
+                           'dropping event')
+
+
 def configure_tool_event_publisher(publisher: Optional[Any]) -> None:
     """Register a best-effort publisher for Dynamo tool lifecycle events."""
     global _TOOL_EVENT_PUBLISHER, _TOOL_EVENT_PUBLISHER_INIT_ATTEMPTED
@@ -154,6 +172,11 @@ def init_tool_event_publisher_from_env() -> bool:
 
         logger.info('Dynamo tool-event publisher started on %s', endpoint)
         return True
+
+
+def publish_tool_event_record(record: Dict[str, Any]) -> None:
+    """Publish an already-normalized Dynamo tool trace record."""
+    _publish_record(record)
 
 
 def build_agent_context(

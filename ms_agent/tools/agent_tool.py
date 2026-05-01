@@ -108,6 +108,9 @@ def _run_agent_in_subprocess(
 ) -> None:
     sub_agent = None
     try:
+        if event_queue is not None:
+            agent_trace.configure_tool_event_publisher(
+                agent_trace.QueueToolEventPublisher(event_queue))
         sub_agent = _build_sub_agent(spec, default_trust_remote_code,
                                      parent_program_id)
         run_payload = payload
@@ -180,6 +183,7 @@ class AgentTool(ToolBase):
     """Expose existing ms-agent agents as callable tools."""
 
     DEFAULT_SERVER = 'agent_tools'
+    _PROCESS_EVENT_QUEUE_SIZE = 4096
     _PROCESS_POLL_INTERVAL_S = 0.05
     _PROCESS_EXIT_RESULT_GRACE_S = 1.0
     _PROCESS_FINAL_JOIN_TIMEOUT_S = 1.0
@@ -613,13 +617,19 @@ class AgentTool(ToolBase):
             nonlocal runtime_agent_tag, runtime_agent_type
             ctx = mp.get_context('spawn')
             result_queue = ctx.Queue(maxsize=1)
-            event_queue = ctx.Queue(
-                maxsize=128) if self._chunk_cb is not None else None
+            event_queue = ctx.Queue(maxsize=self._PROCESS_EVENT_QUEUE_SIZE)
             proc: Optional[mp.Process] = None
             run_id = f'{call_id or "agent_tool"}-{uuid.uuid4().hex[:8]}'
 
-            def _emit_stream_event(event: Dict[str, Any]) -> None:
-                if not self._chunk_cb:
+            def _emit_process_event(event: Dict[str, Any]) -> None:
+                event_type = event.get('type')
+                if event_type == agent_trace.QUEUE_TOOL_EVENT_TYPE:
+                    record = event.get('record')
+                    if isinstance(record, dict):
+                        agent_trace.publish_tool_event_record(record)
+                    return
+
+                if event_type != 'chunk' or not self._chunk_cb:
                     return
                 history_payload = event.get('history')
                 if not isinstance(history_payload, dict):
@@ -653,13 +663,13 @@ class AgentTool(ToolBase):
                     proc,
                     result_queue,
                     on_poll=lambda: self._drain_process_event_queue(
-                        event_queue, _emit_stream_event))
+                        event_queue, _emit_process_event))
                 if result is None:
                     raise RuntimeError(
                         f'AgentTool subprocess exited without result: {spec.tool_name}'
                     )
                 self._drain_process_event_queue(event_queue,
-                                                _emit_stream_event)
+                                                _emit_process_event)
                 if not result.get('ok'):
                     runtime_agent_tag = result.get(
                         'agent_tag') or runtime_agent_tag
@@ -710,6 +720,8 @@ class AgentTool(ToolBase):
                     if proc.is_alive():
                         self._terminate_process(
                             proc, reason='did not exit after result handling')
+                    self._drain_process_event_queue(event_queue,
+                                                    _emit_process_event)
                 try:
                     result_queue.close()
                     result_queue.join_thread()

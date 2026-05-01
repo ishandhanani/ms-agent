@@ -1,5 +1,6 @@
 # Copyright (c) ModelScope Contributors. All rights reserved.
 import os
+import queue
 import unittest
 from unittest import mock
 
@@ -85,6 +86,32 @@ class TestDynamoAgentTrace(unittest.TestCase):
 
         self.assertEqual(FakePublisher.instances[0].endpoint,
                          'tcp://127.0.0.1:20391')
+
+    def test_queue_tool_event_publisher_forwards_records(self):
+        event_queue = queue.Queue()
+        record = {
+            'schema': 'dynamo.agent.trace.v1',
+            'event_type': 'tool_end',
+        }
+
+        publisher = agent_trace.QueueToolEventPublisher(event_queue)
+        publisher.publish(record)
+
+        forwarded = event_queue.get_nowait()
+        self.assertEqual(forwarded['type'], agent_trace.QUEUE_TOOL_EVENT_TYPE)
+        self.assertIs(forwarded['record'], record)
+
+    def test_publish_tool_event_record_uses_configured_publisher(self):
+        publisher = FakePublisher('in-process')
+        record = {
+            'schema': 'dynamo.agent.trace.v1',
+            'event_type': 'tool_end',
+        }
+
+        agent_trace.configure_tool_event_publisher(publisher)
+        agent_trace.publish_tool_event_record(record)
+
+        self.assertEqual(publisher.records, [record])
 
 
 if __name__ == '__main__':
