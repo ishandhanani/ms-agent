@@ -32,8 +32,8 @@ class TestDynamoAgentTrace(unittest.TestCase):
 
     def test_env_initializes_tool_event_publisher(self):
         env = {
-            'DYNAMO_AGENT_TOOL_EVENTS_ZMQ_ENDPOINT': 'tcp://127.0.0.1:20390',
-            'DYNAMO_AGENT_TOOL_EVENTS_ZMQ_TOPIC': 'tools',
+            'DYN_AGENT_TOOL_EVENTS_ZMQ_ENDPOINT': 'tcp://127.0.0.1:20390',
+            'DYN_AGENT_TOOL_EVENTS_ZMQ_TOPIC': 'tools',
         }
         with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(
                 agent_trace, '_ZmqToolEventPublisher', FakePublisher):
@@ -46,7 +46,7 @@ class TestDynamoAgentTrace(unittest.TestCase):
 
     def test_tool_event_publish_lazily_initializes_from_env(self):
         env = {
-            'DYNAMO_AGENT_TOOL_EVENTS_ZMQ_ENDPOINT': 'tcp://127.0.0.1:20420',
+            'DYN_AGENT_TOOL_EVENTS_ZMQ_ENDPOINT': 'tcp://127.0.0.1:20420',
         }
         context = {
             'workflow_id': 'run-1',
@@ -78,7 +78,7 @@ class TestDynamoAgentTrace(unittest.TestCase):
 
     def test_legacy_wrapper_env_name_is_supported(self):
         env = {
-            'DYNAMO_AGENT_TRACE_TOOL_ZMQ_ENDPOINT': 'tcp://127.0.0.1:20391',
+            'DYN_AGENT_TRACE_TOOL_ZMQ_ENDPOINT': 'tcp://127.0.0.1:20391',
         }
         with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(
                 agent_trace, '_ZmqToolEventPublisher', FakePublisher):
@@ -86,6 +86,26 @@ class TestDynamoAgentTrace(unittest.TestCase):
 
         self.assertEqual(FakePublisher.instances[0].endpoint,
                          'tcp://127.0.0.1:20391')
+
+    def test_deprecated_dynamo_wrapper_env_name_is_supported(self):
+        env = {
+            'DYNAMO_AGENT_TRACE_TOOL_ZMQ_ENDPOINT': 'tcp://127.0.0.1:20392',
+        }
+        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(
+                agent_trace, '_ZmqToolEventPublisher', FakePublisher):
+            self.assertTrue(agent_trace.init_tool_event_publisher_from_env())
+
+        self.assertEqual(FakePublisher.instances[0].endpoint,
+                         'tcp://127.0.0.1:20392')
+
+    def test_build_agent_context_uses_dyn_workflow_type_env(self):
+        env = {
+            'DYN_AGENT_WORKFLOW_TYPE_ID': 'deep_research',
+        }
+        with mock.patch.dict(os.environ, env, clear=True):
+            context = agent_trace.build_agent_context('researcher')
+
+        self.assertEqual(context['workflow_type_id'], 'deep_research')
 
     def test_queue_tool_event_publisher_forwards_records(self):
         event_queue = queue.Queue()

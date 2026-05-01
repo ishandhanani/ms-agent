@@ -21,22 +21,23 @@ logger = logging.getLogger(__name__)
 
 _CONTEXT: contextvars.ContextVar[Optional[Dict[str, str]]] = (
     contextvars.ContextVar('dynamo_agent_context', default=None))
-_WORKFLOW_ID = os.environ.get('DYNAMO_AGENT_WORKFLOW_ID',
+_WORKFLOW_ID = os.environ.get('DYN_AGENT_WORKFLOW_ID',
                               f'ms-agent-{uuid.uuid4().hex[:12]}')
 _TOOL_EVENT_PUBLISHER: Optional[Any] = None
 _TOOL_EVENT_PUBLISHER_INIT_ATTEMPTED = False
 _TOOL_EVENT_PUBLISHER_LOCK = threading.Lock()
 
 _TOOL_EVENTS_ENDPOINT_ENVS = (
-    'DYNAMO_AGENT_TOOL_EVENTS_ZMQ_ENDPOINT',
+    'DYN_AGENT_TOOL_EVENTS_ZMQ_ENDPOINT',
+    'DYN_AGENT_TRACE_TOOL_ZMQ_ENDPOINT',
     # Backward-compatible alias used by early local E2E wrappers.
     'DYNAMO_AGENT_TRACE_TOOL_ZMQ_ENDPOINT',
     # Accept Dynamo's server-side name when both processes share one env file.
     'DYN_AGENT_TRACE_TOOL_EVENTS_ZMQ_ENDPOINT',
 )
 _TOOL_EVENTS_TOPIC_ENVS = (
-    'DYNAMO_AGENT_TOOL_EVENTS_ZMQ_TOPIC',
-    'DYNAMO_AGENT_TRACE_TOOL_ZMQ_TOPIC',
+    'DYN_AGENT_TOOL_EVENTS_ZMQ_TOPIC',
+    'DYN_AGENT_TRACE_TOOL_ZMQ_TOPIC',
     'DYN_AGENT_TRACE_TOOL_EVENTS_ZMQ_TOPIC',
 )
 _ZMQ_HWM = 100_000
@@ -185,7 +186,7 @@ def build_agent_context(
     parent_program_id: Optional[str] = None,
 ) -> Dict[str, str]:
     workflow_type_id = (workflow_type_id
-                        or os.environ.get('DYNAMO_AGENT_WORKFLOW_TYPE_ID')
+                        or os.environ.get('DYN_AGENT_WORKFLOW_TYPE_ID')
                         or 'ms_agent')
     program_id = f'{_WORKFLOW_ID}:{agent_tag}:{uuid.uuid4().hex[:8]}'
     context = {
