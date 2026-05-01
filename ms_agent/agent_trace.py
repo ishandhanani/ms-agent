@@ -30,8 +30,6 @@ _TOOL_EVENT_PUBLISHER_LOCK = threading.Lock()
 _TOOL_EVENTS_ENDPOINT_ENVS = (
     'DYN_AGENT_TOOL_EVENTS_ZMQ_ENDPOINT',
     'DYN_AGENT_TRACE_TOOL_ZMQ_ENDPOINT',
-    # Backward-compatible alias used by early local E2E wrappers.
-    'DYNAMO_AGENT_TRACE_TOOL_ZMQ_ENDPOINT',
     # Accept Dynamo's server-side name when both processes share one env file.
     'DYN_AGENT_TRACE_TOOL_EVENTS_ZMQ_ENDPOINT',
 )

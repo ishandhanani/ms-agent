@@ -87,17 +87,6 @@ class TestDynamoAgentTrace(unittest.TestCase):
         self.assertEqual(FakePublisher.instances[0].endpoint,
                          'tcp://127.0.0.1:20391')
 
-    def test_deprecated_dynamo_wrapper_env_name_is_supported(self):
-        env = {
-            'DYNAMO_AGENT_TRACE_TOOL_ZMQ_ENDPOINT': 'tcp://127.0.0.1:20392',
-        }
-        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(
-                agent_trace, '_ZmqToolEventPublisher', FakePublisher):
-            self.assertTrue(agent_trace.init_tool_event_publisher_from_env())
-
-        self.assertEqual(FakePublisher.instances[0].endpoint,
-                         'tcp://127.0.0.1:20392')
-
     def test_build_agent_context_uses_dyn_workflow_type_env(self):
         env = {
             'DYN_AGENT_WORKFLOW_TYPE_ID': 'deep_research',
