@@ -1,5 +1,6 @@
 import argparse
 
+from ms_agent import agent_trace
 from ms_agent.cli.app import AppCMD
 from ms_agent.cli.run import RunCMD
 from ms_agent.cli.ui import UICMD
@@ -27,6 +28,8 @@ def run_cmd():
     if not hasattr(args, 'func'):
         parser.print_help()
         exit(1)
+
+    agent_trace.init_tool_event_publisher_from_env()
     cmd = args.func(args)
     cmd.execute()
 

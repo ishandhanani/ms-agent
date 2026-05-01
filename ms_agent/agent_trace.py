@@ -7,22 +7,104 @@ tool lifecycle events. Dynamo owns normalized LLM tracing and trace sinks.
 
 import contextlib
 import contextvars
+import logging
 import os
+import struct
+import threading
 import time
 import uuid
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Dict, Iterator, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 _CONTEXT: contextvars.ContextVar[Optional[Dict[str, str]]] = (
     contextvars.ContextVar('dynamo_agent_context', default=None))
 _WORKFLOW_ID = os.environ.get('DYNAMO_AGENT_WORKFLOW_ID',
                               f'ms-agent-{uuid.uuid4().hex[:12]}')
 _TOOL_EVENT_PUBLISHER: Optional[Any] = None
+_TOOL_EVENT_PUBLISHER_INIT_ATTEMPTED = False
+_TOOL_EVENT_PUBLISHER_LOCK = threading.Lock()
+
+_TOOL_EVENTS_ENDPOINT_ENVS = (
+    'DYNAMO_AGENT_TOOL_EVENTS_ZMQ_ENDPOINT',
+    # Backward-compatible alias used by early local E2E wrappers.
+    'DYNAMO_AGENT_TRACE_TOOL_ZMQ_ENDPOINT',
+    # Accept Dynamo's server-side name when both processes share one env file.
+    'DYN_AGENT_TRACE_TOOL_EVENTS_ZMQ_ENDPOINT',
+)
+_TOOL_EVENTS_TOPIC_ENVS = (
+    'DYNAMO_AGENT_TOOL_EVENTS_ZMQ_TOPIC',
+    'DYNAMO_AGENT_TRACE_TOOL_ZMQ_TOPIC',
+    'DYN_AGENT_TRACE_TOOL_EVENTS_ZMQ_TOPIC',
+)
+_DEFAULT_ZMQ_STARTUP_DELAY_SECONDS = 0.5
+
+
+def _first_env(names: Tuple[str, ...]) -> Optional[str]:
+    for name in names:
+        value = os.environ.get(name)
+        if value and value.strip():
+            return value.strip()
+    return None
+
+
+class _ZmqToolEventPublisher:
+
+    def __init__(self,
+                 endpoint: str,
+                 topic: str = '',
+                 startup_delay_seconds: float = _DEFAULT_ZMQ_STARTUP_DELAY_SECONDS):
+        import msgpack
+        import zmq
+
+        self._msgpack = msgpack
+        self._topic = topic.encode('utf-8')
+        self._seq = 0
+        self._socket = zmq.Context.instance().socket(zmq.PUB)
+        self._socket.bind(endpoint)
+        if startup_delay_seconds > 0:
+            time.sleep(startup_delay_seconds)
+
+    def publish(self, record: Dict[str, Any]) -> None:
+        self._seq += 1
+        payload = self._msgpack.packb(record, use_bin_type=True)
+        self._socket.send_multipart(
+            [self._topic, struct.pack('>Q', self._seq), payload])
 
 
 def configure_tool_event_publisher(publisher: Optional[Any]) -> None:
     """Register a best-effort publisher for Dynamo tool lifecycle events."""
-    global _TOOL_EVENT_PUBLISHER
-    _TOOL_EVENT_PUBLISHER = publisher
+    global _TOOL_EVENT_PUBLISHER, _TOOL_EVENT_PUBLISHER_INIT_ATTEMPTED
+    with _TOOL_EVENT_PUBLISHER_LOCK:
+        _TOOL_EVENT_PUBLISHER = publisher
+        _TOOL_EVENT_PUBLISHER_INIT_ATTEMPTED = True
+
+
+def init_tool_event_publisher_from_env() -> bool:
+    """Initialize Dynamo tool-event publishing from environment variables."""
+    global _TOOL_EVENT_PUBLISHER, _TOOL_EVENT_PUBLISHER_INIT_ATTEMPTED
+
+    with _TOOL_EVENT_PUBLISHER_LOCK:
+        if _TOOL_EVENT_PUBLISHER_INIT_ATTEMPTED:
+            return _TOOL_EVENT_PUBLISHER is not None
+        _TOOL_EVENT_PUBLISHER_INIT_ATTEMPTED = True
+
+        endpoint = _first_env(_TOOL_EVENTS_ENDPOINT_ENVS)
+        if not endpoint:
+            return False
+        topic = _first_env(_TOOL_EVENTS_TOPIC_ENVS) or ''
+
+        try:
+            _TOOL_EVENT_PUBLISHER = _ZmqToolEventPublisher(endpoint, topic)
+        except Exception as exc:  # noqa
+            logger.warning(
+                'Dynamo tool-event publisher disabled: failed to bind %s: %s',
+                endpoint, exc)
+            _TOOL_EVENT_PUBLISHER = None
+            return False
+
+        logger.info('Dynamo tool-event publisher started on %s', endpoint)
+        return True
 
 
 def build_agent_context(
@@ -87,7 +169,10 @@ def instrument_llm_request(
 def _publish_record(record: Dict[str, Any]) -> None:
     publisher = _TOOL_EVENT_PUBLISHER
     if publisher is None:
-        return
+        init_tool_event_publisher_from_env()
+        publisher = _TOOL_EVENT_PUBLISHER
+        if publisher is None:
+            return
 
     try:
         publish = getattr(publisher, 'publish', None)
@@ -184,3 +269,10 @@ class ToolCallTrace:
 def start_tool_call(tool_name: str,
                     tool_call_id: Optional[str] = None) -> ToolCallTrace:
     return ToolCallTrace(tool_name, tool_call_id)
+
+
+def _reset_tool_event_publisher_for_tests() -> None:
+    global _TOOL_EVENT_PUBLISHER, _TOOL_EVENT_PUBLISHER_INIT_ATTEMPTED
+    with _TOOL_EVENT_PUBLISHER_LOCK:
+        _TOOL_EVENT_PUBLISHER = None
+        _TOOL_EVENT_PUBLISHER_INIT_ATTEMPTED = False

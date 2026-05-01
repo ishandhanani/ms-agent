@@ -8,11 +8,13 @@ matplotlib
 mcp
 modelscope
 moviepy
+msgpack
 numpy
 omegaconf
 openai
 pandas
 pillow
+pyzmq
 pyyaml
 requests
 sentence-transformers
