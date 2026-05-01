@@ -10,7 +10,7 @@ class FakePublisher:
 
     instances = []
 
-    def __init__(self, endpoint: str, topic: str = '', startup_delay_seconds=0):
+    def __init__(self, endpoint: str, topic: str = ''):
         self.endpoint = endpoint
         self.topic = topic
         self.records = []
@@ -67,6 +67,12 @@ class TestDynamoAgentTrace(unittest.TestCase):
         self.assertEqual(records[0]['agent_context'], context)
         self.assertEqual(records[0]['tool']['tool_call_id'], 'call-1')
         self.assertEqual(records[0]['tool']['tool_class'], 'web_search')
+        self.assertIn('started_at_unix_ms', records[0]['tool'])
+        self.assertIn('started_at_unix_ms', records[1]['tool'])
+        self.assertIn('ended_at_unix_ms', records[1]['tool'])
+        self.assertIn('duration_ms', records[1]['tool'])
+        self.assertGreaterEqual(records[1]['tool']['ended_at_unix_ms'],
+                                records[1]['tool']['started_at_unix_ms'])
         self.assertEqual(records[1]['tool']['status'], 'succeeded')
 
     def test_legacy_wrapper_env_name_is_supported(self):
