@@ -121,7 +121,7 @@ class LLMAgent(Agent):
         self.config_handler = self.register_config_handler()
         self._dynamo_agent_context = agent_trace.build_agent_context(
             self.tag,
-            parent_program_id=kwargs.get('parent_program_id'),
+            parent_trajectory_id=kwargs.get('parent_trajectory_id'),
         )
 
         # AutoSkills integration (lazy initialization)

@@ -49,9 +49,9 @@ class TestDynamoAgentTrace(unittest.TestCase):
             'DYN_AGENT_TOOL_EVENTS_ZMQ_ENDPOINT': 'tcp://127.0.0.1:20420',
         }
         context = {
-            'workflow_id': 'run-1',
-            'workflow_type_id': 'ms_agent',
-            'program_id': 'run-1:agent',
+            'session_id': 'run-1',
+            'session_type_id': 'ms_agent',
+            'trajectory_id': 'run-1:agent',
         }
 
         with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(
@@ -87,14 +87,14 @@ class TestDynamoAgentTrace(unittest.TestCase):
         self.assertEqual(FakePublisher.instances[0].endpoint,
                          'tcp://127.0.0.1:20391')
 
-    def test_build_agent_context_uses_dyn_workflow_type_env(self):
+    def test_build_agent_context_uses_dyn_session_type_env(self):
         env = {
-            'DYN_AGENT_WORKFLOW_TYPE_ID': 'deep_research',
+            'DYN_AGENT_SESSION_TYPE_ID': 'deep_research',
         }
         with mock.patch.dict(os.environ, env, clear=True):
             context = agent_trace.build_agent_context('researcher')
 
-        self.assertEqual(context['workflow_type_id'], 'deep_research')
+        self.assertEqual(context['session_type_id'], 'deep_research')
 
     def test_queue_tool_event_publisher_forwards_records(self):
         event_queue = queue.Queue()

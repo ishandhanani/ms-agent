@@ -21,8 +21,8 @@ logger = logging.getLogger(__name__)
 
 _CONTEXT: contextvars.ContextVar[Optional[Dict[str, str]]] = (
     contextvars.ContextVar('dynamo_agent_context', default=None))
-_WORKFLOW_ID = os.environ.get('DYN_AGENT_WORKFLOW_ID',
-                              f'ms-agent-{uuid.uuid4().hex[:12]}')
+_SESSION_ID = os.environ.get('DYN_AGENT_SESSION_ID',
+                             f'ms-agent-{uuid.uuid4().hex[:12]}')
 _TOOL_EVENT_PUBLISHER: Optional[Any] = None
 _TOOL_EVENT_PUBLISHER_INIT_ATTEMPTED = False
 _TOOL_EVENT_PUBLISHER_LOCK = threading.Lock()
@@ -64,9 +64,9 @@ class _ZmqToolEventPublisher:
         self._running = True
         self._event_queue: 'queue.Queue[Optional[bytes]]' = queue.Queue(
             maxsize=_ZMQ_MAX_QUEUE_SIZE)
-        self._socket = zmq.Context.instance().socket(zmq.PUB)
+        self._socket = zmq.Context.instance().socket(zmq.PUSH)
         self._socket.set_hwm(_ZMQ_HWM)
-        self._socket.bind(endpoint)
+        self._socket.connect(endpoint)
         self._thread = threading.Thread(
             target=self._publisher_thread,
             daemon=True,
@@ -164,12 +164,12 @@ def init_tool_event_publisher_from_env() -> bool:
             _TOOL_EVENT_PUBLISHER = _ZmqToolEventPublisher(endpoint, topic)
         except Exception as exc:  # noqa
             logger.warning(
-                'Dynamo tool-event publisher disabled: failed to bind %s: %s',
+                'Dynamo tool-event publisher disabled: failed to connect %s: %s',
                 endpoint, exc)
             _TOOL_EVENT_PUBLISHER = None
             return False
 
-        logger.info('Dynamo tool-event publisher started on %s', endpoint)
+        logger.info('Dynamo tool-event publisher connected to %s', endpoint)
         return True
 
 
@@ -180,20 +180,20 @@ def publish_tool_event_record(record: Dict[str, Any]) -> None:
 
 def build_agent_context(
     agent_tag: str,
-    workflow_type_id: Optional[str] = None,
-    parent_program_id: Optional[str] = None,
+    session_type_id: Optional[str] = None,
+    parent_trajectory_id: Optional[str] = None,
 ) -> Dict[str, str]:
-    workflow_type_id = (workflow_type_id
-                        or os.environ.get('DYN_AGENT_WORKFLOW_TYPE_ID')
-                        or 'ms_agent')
-    program_id = f'{_WORKFLOW_ID}:{agent_tag}:{uuid.uuid4().hex[:8]}'
+    session_type_id = (session_type_id
+                       or os.environ.get('DYN_AGENT_SESSION_TYPE_ID')
+                       or 'ms_agent')
+    trajectory_id = f'{_SESSION_ID}:{agent_tag}:{uuid.uuid4().hex[:8]}'
     context = {
-        'workflow_id': _WORKFLOW_ID,
-        'workflow_type_id': workflow_type_id,
-        'program_id': program_id,
+        'session_id': _SESSION_ID,
+        'session_type_id': session_type_id,
+        'trajectory_id': trajectory_id,
     }
-    if parent_program_id:
-        context['parent_program_id'] = parent_program_id
+    if parent_trajectory_id:
+        context['parent_trajectory_id'] = parent_trajectory_id
     return context
 
 
@@ -206,11 +206,11 @@ def activate_context(agent_context: Optional[Dict[str, str]]) -> Iterator[None]:
         _CONTEXT.reset(token)
 
 
-def current_program_id() -> Optional[str]:
+def current_trajectory_id() -> Optional[str]:
     context = _CONTEXT.get()
     if not context:
         return None
-    return context.get('program_id')
+    return context.get('trajectory_id')
 
 
 def instrument_llm_request(
